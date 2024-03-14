@@ -34,6 +34,3 @@ roslaunch stingray_sim wall_following.launch
 ```
 
 The Robot will spawn at `(3,-3)` and follows along the wall.
-# wall-following-triton
-# wall-following-triton
-# wall-following-triton
