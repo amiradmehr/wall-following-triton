@@ -20,8 +20,9 @@ class QTabel:
         self.actions = list(wf.ACTIONS.values())
         self.q_table_df = None
 
+        self.dir = os.path.join(os.path.dirname(__file__), 'q_table.npy')
 
-    def initialize_q_table(self, states, actions):
+    def initialize_q_table(self):
         for right in wf.right_regions:
             for front_right in wf.front_right_regions:
                 for front in wf.front_regions:
@@ -31,50 +32,121 @@ class QTabel:
         for state in self.states:
             self.q_table[state] = np.zeros(len(wf.ACTIONS))
         
-        self.q_table_df = pd.DataFrame(self.q_table.values(), index=self.q_table.keys(), columns=wf.ACTIONS.keys())
+        # self.q_table_df = pd.DataFrame(self.q_table.values(), index=self.q_table.keys(), columns=wf.ACTIONS.keys())
     
     def update_q_table(self, q_table, state, action, reward, next_state, next_action):
         pass
 
     def get_action(self, q_table, state):
         # Get the index of the action with the highest value
-        action_index = np.argmax(q_table[state])
+        # if every value is the same then choose a random action
+        if np.all(q_table[state] == q_table[state][0]):
+            print(f"q_table[state]: {q_table[state]}")
+            action_index = np.random.choice(len(self.actions))
+        else:
+            action_index = np.argmax(q_table[state])
+            
 
         return action_index
 
     def save_q_table(self, q_table):
-        np.save('q_table.npy', q_table)
+        # saving the q table in the same directory as the current file
+        np.save(self.dir, q_table)
 
     def load_q_table(self, q_table):
-        self.q_table = np.load('q_table.npy', allow_pickle=True)
+        self.q_table = np.load(self.dir, allow_pickle=True)
 
-    def get_state(right_range, front_right_range, front_range, left_range):
-        # Define the range thresholds and corresponding regions
-        right_thresholds = [0.2, 0.5, 1.0, float('inf')]
-        right_regions = ['too_close', 'medium', 'far', 'too_far']
-        front_right_thresholds = [0.5, float('inf')]
-        front_right_regions = ['close', 'far']
-        front_thresholds = [0.2, 0.5, 1.0, float('inf')]
-        front_regions = ['too_close', 'medium', 'far', 'too_far']
-        left_thresholds = [0.5, float('inf')]
-        left_regions = ['close', 'far']
+    def get_state(self, lidar_ranges):
+
+        right_range = lidar_ranges['right']
+        front_right_range = lidar_ranges['front_right']
+        front_range = lidar_ranges['front']
+        left_range = lidar_ranges['left']
 
         # Determine the state for the right side
-        right_state = right_regions[max(map(right_range.__ge__, right_thresholds))]
+        right_state_index = np.argmax(right_range < wf.right_thresholds)
+        right_state = wf.right_regions[right_state_index]
 
         # Determine the state for the front right side
-        front_right_state = front_right_regions[front_right_range >= front_right_thresholds[0]]
+        front_right_state_index = np.argmax(front_right_range < wf.front_right_thresholds)
+        front_right_state = wf.front_right_regions[front_right_state_index]
 
         # Determine the state for the front side
-        front_state = front_regions[max(map(front_range.__ge__, front_thresholds))]
+        front_state_index = np.argmax(front_range < wf.front_thresholds)
+        front_state = wf.front_regions[front_state_index]
 
         # Determine the state for the left side
-        left_state = left_regions[left_range >= left_thresholds[0]]
+        left_state_index = np.argmax(left_range < wf.left_thresholds)
+        left_state = wf.left_regions[left_state_index]
 
         return (right_state, front_right_state, front_state, left_state)
     
 
+    def train(self, robot, q_table, gazebo, num_episodes=1000, alpha=0.2, gamma=0.9, epsilon=0.1):
 
+        for episode in range(num_episodes):
+            # Reset the environment
+            robot.stop()
+            # Set the robot to a random position integer between -5 and 3 since the grid is 4x4
+
+            randp_x = np.random.randint(-5, 3) + 0.5 # add 0.5 to make sure the robot is not on the wall
+            randp_y = np.random.randint(-5, 3) + 0.5
+
+            # Set the robot to the random position
+            gazebo.set_model_state(randp_x, randp_y)
+            
+            # Get the current state
+            state = self.get_state(robot.ranges)
+
+            # Get the action
+            action = self.get_action(q_table, state)
+
+            # Initialize the total reward
+            total_reward = 0
+
+            while True:
+                # Perform the action
+                robot.steer(self.actions[action])
+
+                # Get the next state
+                right_range, front_right_range, front_range, left_range = robot.ranges.values()
+                next_state = self.get_state(right_range, front_right_range, front_range, left_range)
+
+                # Get the reward
+                reward = self.get_reward(next_state)
+
+                # Get the next action
+                next_action = self.get_action(q_table, next_state)
+
+                # Update the Q-table
+                q_table[state][action] += alpha * (reward + gamma * q_table[next_state][next_action] - q_table[state][action])
+
+                # Update the state and action
+                state = next_state
+                action = next_action
+
+                # Update the total reward
+                total_reward += reward
+
+                # Check if the episode is done
+                if self.is_done(state):
+                    break
+
+            # Print the total reward
+            print(f"Episode {episode + 1}: Total Reward: {total_reward}")
+
+            # Save the Q-table
+            self.save_q_table(q_table)
+
+    def get_reward(self, state):
+
+        # we want to avoid the wall on the right to be too close or too far
+        # also avoid the wall on the left to be too close
+        # and also the front wall to be too close
+        if state[0] == 'too_close' or state[0] == 'too_far' or state[3] == 'too_close' or state[2] == 'too_close':
+            return -1
+        else:
+            return 0
 
 class Robot:
     def __init__(self) -> None:
@@ -103,8 +175,8 @@ class Robot:
         self.ranges = {'right': min(msg.ranges[-60:] + msg.ranges[:60]),
                        'front_right': min(msg.ranges[60:80]),
                         'front': min(msg.ranges[85:105]),
-                        'left': min(msg.ranges[120:180])}
-
+                        'left': min(msg.ranges[120:180])}\
+                        
 
     def go_forward(self, linear_speed = wf.LINEAR_SPEED_Y):
 
@@ -126,6 +198,9 @@ class Robot:
         self.vel_msg.linear.x = 0
 
         self.vel_pub.publish(self.vel_msg)
+
+    def run_from_q_table(self, q_table):
+        pass
 
 
 
@@ -162,7 +237,20 @@ class Gazebo:
 
 def main():
 
-    pass
+    q = QTabel()
+    q.initialize_q_table()
+
+    print(q.q_table[('too_close', 'close', 'too_close', 'close')][2])
+
+    # q.q_table[('too_close', 'close', 'too_close', 'close')][2] = 3
+    print(q.q_table[('too_close', 'close', 'too_close', 'close')][2])
+
+    a = q.get_action(q.q_table, ('too_close', 'close', 'too_close', 'close'))
+    print(f"action: {a}")
+
+    sample_lidar_ranges = {'right': 0.1, 'front_right': 1.4, 'front': 0.7, 'left': 0.5}
+
+    print(q.get_state(sample_lidar_ranges))
 
 
 

@@ -11,20 +11,20 @@ LINEAR_SPEED_Y = 0.3
 states = []
 
 # 1. Right side divided into 4 regions
-right_regions = ['too_close', 'close', 'medium', 'far', 'too_far']
-right_thresholds = [0.3, 0.4, 0.5, 1.0, np.inf]
+right_regions = np.array(['too_close', 'close', 'medium', 'far', 'too_far'])
+right_thresholds = np.array([0.3, 0.4, 0.5, 1.0, np.inf])
 
 # 2. Front right divided into 2 regions
-front_right_regions = ['close', 'far']
-front_right_thresholds = [1.5, np.inf]
+front_right_regions = np.array(['close', 'far'])
+front_right_thresholds = np.array([1.5, np.inf])
 
 # 3. Front side divided into 4 regions
-front_regions = ['too_close', 'close', 'medium', 'far']
-front_thresholds = [0.3, 0.7, 1.2, 2.0, np.inf]
+front_regions = np.array(['too_close', 'close', 'medium', 'far'])
+front_thresholds = np.array([0.3, 0.7, 1.2, 2.0, np.inf])
 
 # 4. Left divided into 2 regions
-left_regions = ['close', 'far']
-left_thresholds = [0.5, np.inf]
+left_regions = np.array(['close', 'far'])
+left_thresholds = np.array([0.5, np.inf])
 
 '''
 actions are defined as the angle to turn the robot
@@ -48,7 +48,7 @@ q_table = {}
 for state in states:
     q_table[state] = np.zeros(len(ACTIONS))
 
-print(q_table[states[0]])
+# print(q_table[states[0]])
 
 
 # turn it into pandas dataframe
@@ -58,4 +58,4 @@ q_table_df = pd.DataFrame(q_table.values(), index=q_table.keys(), columns=ACTION
 
 # query the first state
 
-# print(q_table_df.loc[('too_close', 'close', 'too_close', 'close')])
+# print(q_table_df.loc[('too_close', 'close', 'too_close', 'close')]['right_fast'])
