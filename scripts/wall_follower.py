@@ -129,9 +129,11 @@ class QTabel:
                 self.q_table[prev_state][action_index] += alpha * (reward + gamma * np.max(self.q_table[current_state]) - self.q_table[prev_state][action_index])
 
                 # check if the robot hit the wall
-                if current_state[0] == 'too_close' or current_state[2] == 'too_close':
-                    rospy.loginfo("Robot hit the wall")
-                    break
+                # if current_state[0] == 'too_close' or current_state[2] == 'too_close':
+                #     rospy.loginfo("Robot hit the wall")
+                #     break
+
+
                 # Check if the robot is stucked
                 # if np.isclose(prev_model_state.pose.position.x, current_model_state.pose.position.x, atol=0.005) and np.isclose(prev_model_state.pose.position.y, current_model_state.pose.position.y, atol=0.005):
                 #     stucked += 1
@@ -177,7 +179,7 @@ class QTabel:
         # and also the front wall to be too close
         reward_array = np.zeros(len(self.actions))
 
-        if state[0] == 'too_close' or state[0] == 'too_far' or state[3] == 'too_close' or state[2] == 'too_close':
+        if state[0] == 'too_close' or state[0] == 'too_far' or state[3] == 'close' or state[2] == 'too_close':
             return -1
         else:
             return 0
@@ -223,6 +225,10 @@ class Robot:
         self.vel_pub.publish(self.vel_msg)
 
     def steer(self, angular_speed, linear_speed = wf.LINEAR_SPEED_Y):
+
+        #linear speed is a value
+        #angular speed is a value in radians and not the index of the action
+
         self.vel_msg.linear.y = linear_speed
         self.vel_msg.linear.x = 0
         self.vel_msg.angular.z = angular_speed
@@ -234,9 +240,6 @@ class Robot:
         self.vel_msg.linear.x = 0
 
         self.vel_pub.publish(self.vel_msg)
-
-    
-
 
 class Gazebo:
     def __init__(self) -> None:
@@ -271,89 +274,6 @@ class Gazebo:
             print(f"Service call failed: {e}")
 
 
-def test_get_state():
-    q = QTabel()
-    print(q.get_state({'right': 1.3417036533355713, 'front_right': 2.9390792846679688, 'front': 3.3551838397979736, 'left': 0.3766634166240692}))
-
-def test_q_table():
-    q = QTabel()
-    q.initialize_q_table()
-    # print(q.q_table)
-    # print(q.states)
-    # print(q.actions)
-    # print(q.q_table_df)
-
-    # print(q.get_state({'right': 5, 'front_right': 0.5, 'front': 0.5, 'left': 0.5}))
-
-    # print(q.get_action(q.q_table, ('far', 'far', 'far', 'far')))
-
-    q.save_q_table(q.q_table)
-
-    q.load_q_table(q.q_table)
-
-    # print(q.q_table)
-
-    print(q.get_reward(('too_close', 'far', 'far', 'far')))
-
-    # print(q.get_reward(('too_close', 'far', 'far', 'far')))
-
-    # print(q.get_reward(('far', 'far', 'far', 'too_close')))
-
-    # print(q.get_reward(('far', 'far', 'too_close', 'far')))
-
-    # print(q.get_reward(('far', 'too_close ', 'far', 'far')))
-
-def run_from_q_table(q, q_table):
-    robot = Robot()
-    gazebo = Gazebo()
-
-    robot.stop()
-    # Set the robot to a random position integer between -5 and 3 since the grid is 4x4
-
-    randp_x = np.random.randint(-4, 3) + 0.5 # add 0.5 to make sure the robot is not on the wall
-    randp_y = np.random.randint(-4, 3) + 0.5
-
-    # Set the robot to the random position
-    gazebo.set_model_state(randp_x, randp_y)
-
-    prev_state = q.get_state(robot.ranges)
-    prev_model_state = gazebo.get_model_state()
-
-    for i in range(1000):
-        action_index = q.get_action(q_table, prev_state)
-        action = q.actions[action_index]
-
-        # Perform the action
-        robot.go_forward()
-        robot.steer(angular_speed=action)
-
-        # Get the current state and model state
-        current_state = q.get_state(robot.ranges)
-        current_model_state = gazebo.get_model_state()
-
-        # Get the reward
-        reward = q.get_reward(current_state)
-
-        # check if the robot hit the wall
-        if current_state[0] == 'too_close' or current_state[2] == 'too_close':
-            rospy.loginfo("Robot hit the wall")
-            break
-        # Check if the robot is tripped
-        r, p, y = euler_from_quaternion([current_model_state.pose.orientation.x, current_model_state.pose.orientation.y, current_model_state.pose.orientation.z, current_model_state.pose.orientation.w])
-        if abs(p) > 0.01 or abs(r) > 0.01:
-            rospy.loginfo("Robot is tripped")
-            break
-
-        if i%100 == 0:
-            rospy.loginfo(f"Step {i} completed")
-
-        robot.rate.sleep()
-
-        prev_model_state = current_model_state
-        prev_state = current_state
-
-    rospy.loginfo("Run completed")
-
 def main():
 
     q = QTabel()
@@ -370,11 +290,8 @@ def main():
             q.train(robot=robot, gazebo=gaz)
         elif sys.argv[1] == 'run':
             q.load_q_table()
-            run_from_q_table(q, q.q_table)
         else:
             print("Invalid argument")
-
-
 
 
 if __name__ == '__main__':
