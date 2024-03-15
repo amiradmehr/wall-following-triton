@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import wf_param as wf
 import os
+import sys
 
 class QTabel:
     def __init__(self) -> None:
@@ -41,7 +42,6 @@ class QTabel:
         # Get the index of the action with the highest value
         # if every value is the same then choose a random action
         if np.all(q_table[state] == q_table[state][0]):
-            print(f"q_table[state]: {q_table[state]}")
             action_index = np.random.choice(len(self.actions))
         else:
             action_index = np.argmax(q_table[state])
@@ -53,7 +53,7 @@ class QTabel:
         # saving the q table in the same directory as the current file
         np.save(self.dir, q_table)
 
-    def load_q_table(self, q_table):
+    def load_q_table(self):
         self.q_table = np.load(self.dir, allow_pickle=True)
 
     def get_state(self, lidar_ranges):
@@ -82,71 +82,107 @@ class QTabel:
         return (right_state, front_right_state, front_state, left_state)
     
 
-    def train(self, robot, q_table, gazebo, num_episodes=1000, alpha=0.2, gamma=0.9, epsilon=0.1):
+    def train(self, robot, gazebo, num_episodes=1000, alpha=0.2, gamma=0.9, epsilon=0.1):
 
         for episode in range(num_episodes):
             # Reset the environment
             robot.stop()
             # Set the robot to a random position integer between -5 and 3 since the grid is 4x4
 
-            randp_x = np.random.randint(-5, 3) + 0.5 # add 0.5 to make sure the robot is not on the wall
-            randp_y = np.random.randint(-5, 3) + 0.5
+            randp_x = np.random.randint(-4, 3) + 0.5 # add 0.5 to make sure the robot is not on the wall
+            randp_y = np.random.randint(-4, 3) + 0.5
 
             # Set the robot to the random position
             gazebo.set_model_state(randp_x, randp_y)
+ 
+            # Get the previous state and model state
+            prev_state = self.get_state(robot.ranges)
+            prev_model_state = gazebo.get_model_state()
             
-            # Get the current state
-            state = self.get_state(robot.ranges)
 
-            # Get the action
-            action = self.get_action(q_table, state)
+            goodjob = 0
+            stucked = 0
 
-            # Initialize the total reward
-            total_reward = 0
+            rospy.loginfo(f"Episode {episode + 1} started")
 
-            while True:
+            for i in range(1000):
+                # choose a random action
+                if np.random.uniform(0, 1) < epsilon:
+                    action_index = np.random.choice(len(self.actions))
+                    action = self.actions[action_index]
+
+                else:
+                    action_index = self.get_action(self.q_table, prev_state)
+                    action = self.actions[action_index]
                 # Perform the action
-                robot.steer(self.actions[action])
+                robot.go_forward()
+                robot.steer(angular_speed=action)
 
-                # Get the next state
-                right_range, front_right_range, front_range, left_range = robot.ranges.values()
-                next_state = self.get_state(right_range, front_right_range, front_range, left_range)
+                # Get the current state and model state
+                current_state = self.get_state(robot.ranges)
+                current_model_state = gazebo.get_model_state()
 
                 # Get the reward
-                reward = self.get_reward(next_state)
+                reward = self.get_reward(current_state)
 
-                # Get the next action
-                next_action = self.get_action(q_table, next_state)
+                #update the q table
+                self.q_table[prev_state][action_index] += alpha * (reward + gamma * np.max(self.q_table[current_state]) - self.q_table[prev_state][action_index])
 
-                # Update the Q-table
-                q_table[state][action] += alpha * (reward + gamma * q_table[next_state][next_action] - q_table[state][action])
+                # check if the robot hit the wall
+                if current_state[0] == 'too_close' or current_state[2] == 'too_close':
+                    rospy.loginfo("Robot hit the wall")
+                    break
+                # Check if the robot is stucked
+                # if np.isclose(prev_model_state.pose.position.x, current_model_state.pose.position.x, atol=0.005) and np.isclose(prev_model_state.pose.position.y, current_model_state.pose.position.y, atol=0.005):
+                #     stucked += 1
 
-                # Update the state and action
-                state = next_state
-                action = next_action
+                #     if stucked > 10:
+                #         rospy.loginfo("Robot is stucked")
+                #         break
+                # else:
+                #     stucked = 0
 
-                # Update the total reward
-                total_reward += reward
 
-                # Check if the episode is done
-                if self.is_done(state):
+                # Check if the robot is tripped
+                r, p, y = euler_from_quaternion([current_model_state.pose.orientation.x, current_model_state.pose.orientation.y, current_model_state.pose.orientation.z, current_model_state.pose.orientation.w])
+                if abs(p) > 0.01 or abs(r) > 0.01:
+                    rospy.loginfo("Robot is tripped")
                     break
 
-            # Print the total reward
-            print(f"Episode {episode + 1}: Total Reward: {total_reward}")
+                #check if the robot is doing good; meaning right side is medium and front is not too close
+                if current_state[0] == 'medium' and current_state[2] != 'too_close':
+                    goodjob += 1
 
-            # Save the Q-table
-            self.save_q_table(q_table)
+                    if goodjob > 1000:
+                        rospy.loginfo("Robot is doing good")
+                        break
+
+                if i%100 == 0:
+                    rospy.loginfo(f"Episode {episode + 1} step {i} completed")
+                
+                robot.rate.sleep()
+
+                prev_model_state = current_model_state
+                prev_state = current_state
+            
+            # Save the q table
+            self.save_q_table(self.q_table)
+            rospy.loginfo(f"Episode {episode + 1} completed")
+
 
     def get_reward(self, state):
 
         # we want to avoid the wall on the right to be too close or too far
         # also avoid the wall on the left to be too close
         # and also the front wall to be too close
+        reward_array = np.zeros(len(self.actions))
+
         if state[0] == 'too_close' or state[0] == 'too_far' or state[3] == 'too_close' or state[2] == 'too_close':
             return -1
         else:
             return 0
+
+    
 
 class Robot:
     def __init__(self) -> None:
@@ -199,9 +235,7 @@ class Robot:
 
         self.vel_pub.publish(self.vel_msg)
 
-    def run_from_q_table(self, q_table):
-        pass
-
+    
 
 
 class Gazebo:
@@ -220,6 +254,8 @@ class Gazebo:
         except rospy.ServiceException as e:
             print(f"Service call failed: {e}")
 
+        return self.model_state_msg
+
     def set_model_state(self, x , y):
         rospy.wait_for_service('/gazebo/set_model_state')
         try:
@@ -235,22 +271,109 @@ class Gazebo:
             print(f"Service call failed: {e}")
 
 
+def test_get_state():
+    q = QTabel()
+    print(q.get_state({'right': 1.3417036533355713, 'front_right': 2.9390792846679688, 'front': 3.3551838397979736, 'left': 0.3766634166240692}))
+
+def test_q_table():
+    q = QTabel()
+    q.initialize_q_table()
+    # print(q.q_table)
+    # print(q.states)
+    # print(q.actions)
+    # print(q.q_table_df)
+
+    # print(q.get_state({'right': 5, 'front_right': 0.5, 'front': 0.5, 'left': 0.5}))
+
+    # print(q.get_action(q.q_table, ('far', 'far', 'far', 'far')))
+
+    q.save_q_table(q.q_table)
+
+    q.load_q_table(q.q_table)
+
+    # print(q.q_table)
+
+    print(q.get_reward(('too_close', 'far', 'far', 'far')))
+
+    # print(q.get_reward(('too_close', 'far', 'far', 'far')))
+
+    # print(q.get_reward(('far', 'far', 'far', 'too_close')))
+
+    # print(q.get_reward(('far', 'far', 'too_close', 'far')))
+
+    # print(q.get_reward(('far', 'too_close ', 'far', 'far')))
+
+def run_from_q_table(q, q_table):
+    robot = Robot()
+    gazebo = Gazebo()
+
+    robot.stop()
+    # Set the robot to a random position integer between -5 and 3 since the grid is 4x4
+
+    randp_x = np.random.randint(-4, 3) + 0.5 # add 0.5 to make sure the robot is not on the wall
+    randp_y = np.random.randint(-4, 3) + 0.5
+
+    # Set the robot to the random position
+    gazebo.set_model_state(randp_x, randp_y)
+
+    prev_state = q.get_state(robot.ranges)
+    prev_model_state = gazebo.get_model_state()
+
+    for i in range(1000):
+        action_index = q.get_action(q_table, prev_state)
+        action = q.actions[action_index]
+
+        # Perform the action
+        robot.go_forward()
+        robot.steer(angular_speed=action)
+
+        # Get the current state and model state
+        current_state = q.get_state(robot.ranges)
+        current_model_state = gazebo.get_model_state()
+
+        # Get the reward
+        reward = q.get_reward(current_state)
+
+        # check if the robot hit the wall
+        if current_state[0] == 'too_close' or current_state[2] == 'too_close':
+            rospy.loginfo("Robot hit the wall")
+            break
+        # Check if the robot is tripped
+        r, p, y = euler_from_quaternion([current_model_state.pose.orientation.x, current_model_state.pose.orientation.y, current_model_state.pose.orientation.z, current_model_state.pose.orientation.w])
+        if abs(p) > 0.01 or abs(r) > 0.01:
+            rospy.loginfo("Robot is tripped")
+            break
+
+        if i%100 == 0:
+            rospy.loginfo(f"Step {i} completed")
+
+        robot.rate.sleep()
+
+        prev_model_state = current_model_state
+        prev_state = current_state
+
+    rospy.loginfo("Run completed")
+
 def main():
 
     q = QTabel()
     q.initialize_q_table()
 
-    print(q.q_table[('too_close', 'close', 'too_close', 'close')][2])
+    robot = Robot()
 
-    # q.q_table[('too_close', 'close', 'too_close', 'close')][2] = 3
-    print(q.q_table[('too_close', 'close', 'too_close', 'close')][2])
+    gaz = Gazebo()
 
-    a = q.get_action(q.q_table, ('too_close', 'close', 'too_close', 'close'))
-    print(f"action: {a}")
+    n = len(sys.argv)
 
-    sample_lidar_ranges = {'right': 0.1, 'front_right': 1.4, 'front': 0.7, 'left': 0.5}
+    if n == 2:
+        if sys.argv[1] == 'train':
+            q.train(robot=robot, gazebo=gaz)
+        elif sys.argv[1] == 'run':
+            q.load_q_table()
+            run_from_q_table(q, q.q_table)
+        else:
+            print("Invalid argument")
 
-    print(q.get_state(sample_lidar_ranges))
 
 
 

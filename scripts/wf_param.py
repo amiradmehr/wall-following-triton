@@ -20,7 +20,7 @@ front_right_thresholds = np.array([1.5, np.inf])
 
 # 3. Front side divided into 4 regions
 front_regions = np.array(['too_close', 'close', 'medium', 'far'])
-front_thresholds = np.array([0.3, 0.7, 1.2, 2.0, np.inf])
+front_thresholds = np.array([0.3, 0.5, 1.3, np.inf])
 
 # 4. Left divided into 2 regions
 left_regions = np.array(['close', 'far'])
@@ -30,9 +30,9 @@ left_thresholds = np.array([0.5, np.inf])
 actions are defined as the angle to turn the robot
 '''
 # Right, Forward, Left
-ACTIONS = {'right_fast': radians(-30), 'right_slow': radians(-15), 
+ACTIONS = {'right_fast': radians(-100), 'right_slow': radians(-30), 
            'forward': 0, 
-           'left_fast': radians(30), 'left_slow': radians(15)}
+           'left_fast': radians(100), 'left_slow': radians(30)}
 
 
 # Combine all regions to create the state space
