@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 
 
-LINEAR_SPEED_Y = 0.3
+LINEAR_SPEED_Y = 0.6
 
 
 

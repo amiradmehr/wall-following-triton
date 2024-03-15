@@ -82,9 +82,13 @@ class QTabel:
         return (right_state, front_right_state, front_state, left_state)
     
 
-    def train(self, robot, gazebo, num_episodes=1000, alpha=0.2, gamma=0.9, epsilon=0.1):
+    def train(self, robot, gazebo, num_episodes=200, alpha=0.2, gamma=0.82, epsilon=0.9):
 
         for episode in range(num_episodes):
+
+
+            t_start = rospy.Time.now().to_sec()
+
             # Reset the environment
             robot.stop()
             # Set the robot to a random position integer between -5 and 3 since the grid is 4x4
@@ -101,13 +105,19 @@ class QTabel:
             
 
             goodjob = 0
-            stucked = 0
+            hit_wall = 0
 
-            rospy.loginfo(f"Episode {episode + 1} started")
+            print(f"Episode {episode + 1} started")
+
+            eps = 0
+            d = 0.998
 
             for i in range(1000):
+
+                eps = epsilon * (d ** i)
+
                 # choose a random action
-                if np.random.uniform(0, 1) < epsilon:
+                if np.random.uniform(0, 1) < eps:
                     action_index = np.random.choice(len(self.actions))
                     action = self.actions[action_index]
 
@@ -118,31 +128,30 @@ class QTabel:
                 robot.go_forward()
                 robot.steer(angular_speed=action)
 
-                # Get the current state and model state
                 current_state = self.get_state(robot.ranges)
                 current_model_state = gazebo.get_model_state()
 
+                # Get the current state and model state
+
+                # print(f'current model state: {current_model_state.pose.position.x, current_model_state.pose.position.y}')
+                # print(f'current state: {current_state}')
                 # Get the reward
                 reward = self.get_reward(current_state)
 
                 #update the q table
                 self.q_table[prev_state][action_index] += alpha * (reward + gamma * np.max(self.q_table[current_state]) - self.q_table[prev_state][action_index])
 
-                # check if the robot hit the wall
-                # if current_state[0] == 'too_close' or current_state[2] == 'too_close':
-                #     rospy.loginfo("Robot hit the wall")
-                #     break
-
-
-                # Check if the robot is stucked
-                # if np.isclose(prev_model_state.pose.position.x, current_model_state.pose.position.x, atol=0.005) and np.isclose(prev_model_state.pose.position.y, current_model_state.pose.position.y, atol=0.005):
-                #     stucked += 1
-
-                #     if stucked > 10:
-                #         rospy.loginfo("Robot is stucked")
-                #         break
-                # else:
-                #     stucked = 0
+                # print(f'current model state:\n{current_model_state.pose.position.x, current_model_state.pose.position.y} \n{prev_model_state.pose.position.x, prev_model_state.pose.position.y}')
+                
+                
+                # Check if the robot is hit_wall
+                if np.isclose(current_model_state.pose.position.x, prev_model_state.pose.position.x, atol=0.01) and np.isclose(current_model_state.pose.position.y, prev_model_state.pose.position.y, atol=0.01):
+                    hit_wall += 1
+                    if hit_wall > 3:
+                        print("Robot is hit_wall")
+                        break
+                else:
+                    hit_wall = 0
 
 
                 # Check if the robot is tripped
@@ -162,14 +171,23 @@ class QTabel:
                 if i%100 == 0:
                     rospy.loginfo(f"Episode {episode + 1} step {i} completed")
                 
-                robot.rate.sleep()
+                
 
+                # Update the previous state and model state
                 prev_model_state = current_model_state
                 prev_state = current_state
-            
+
+                # sleep for a while
+
+                robot.rate.sleep()            
             # Save the q table
             self.save_q_table(self.q_table)
-            rospy.loginfo(f"Episode {episode + 1} completed")
+            print(f"Episode {episode + 1} completed")
+
+
+            t_end = rospy.Time.now().to_sec()
+
+            print(f"Episode {episode + 1} took {t_end - t_start:.2f} seconds")
 
 
     def get_reward(self, state):
@@ -248,16 +266,19 @@ class Gazebo:
         self.get_model_state()
 
     def get_model_state(self):
-        rospy.wait_for_service('/gazebo/get_model_state')
+
         try:
-            get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
-            response = get_model_state(self.model_state_msg.name[0], 'world')
-            self.model_state_msg.pose = response.pose
-            self.model_state_msg.twist = response.twist
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=5.0)
+
         except rospy.ServiceException as e:
             print(f"Service call failed: {e}")
 
-        return self.model_state_msg
+        get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
+        response = get_model_state(self.model_state_msg.name[0], 'world')
+        self.model_state_msg.pose = response.pose
+        self.model_state_msg.twist = response.twist
+
+        return response
 
     def set_model_state(self, x , y):
         rospy.wait_for_service('/gazebo/set_model_state')
