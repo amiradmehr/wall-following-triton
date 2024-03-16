@@ -55,6 +55,8 @@ class QTabel:
 
     def load_q_table(self):
         self.q_table = np.load(self.dir, allow_pickle=True)
+        # convert the q table to a dictionary
+        self.q_table = self.q_table.item()
 
     def get_state(self, lidar_ranges):
 
@@ -82,9 +84,13 @@ class QTabel:
         return (right_state, front_right_state, front_state, left_state)
     
 
-    def train(self, robot, gazebo, num_episodes=200, alpha=0.2, gamma=0.82, epsilon=0.9):
+    def train(self, robot, gazebo, num_episodes=1000, alpha=0.2, gamma=0.8, epsilon=0.9):
+
+        t_start_train = rospy.Time.now().to_sec()
 
         for episode in range(num_episodes):
+
+            print(f'time elapsed: {rospy.Time.now().to_sec() - t_start_train:.2f} seconds')
 
 
             t_start = rospy.Time.now().to_sec()
@@ -109,12 +115,14 @@ class QTabel:
 
             print(f"Episode {episode + 1} started")
 
-            eps = 0
+            
             d = 0.998
+            eps = epsilon * (d ** episode)
+            print(f"epsilon: {eps}")
 
-            for i in range(1000):
+            for i in range(2000):
 
-                eps = epsilon * (d ** i)
+                
 
                 # choose a random action
                 if np.random.uniform(0, 1) < eps:
@@ -136,7 +144,7 @@ class QTabel:
                 # print(f'current model state: {current_model_state.pose.position.x, current_model_state.pose.position.y}')
                 # print(f'current state: {current_state}')
                 # Get the reward
-                reward = self.get_reward(current_state)
+                reward = self.get_reward(prev_state)
 
                 #update the q table
                 self.q_table[prev_state][action_index] += alpha * (reward + gamma * np.max(self.q_table[current_state]) - self.q_table[prev_state][action_index])
@@ -145,9 +153,9 @@ class QTabel:
                 
                 
                 # Check if the robot is hit_wall
-                if np.isclose(current_model_state.pose.position.x, prev_model_state.pose.position.x, atol=0.01) and np.isclose(current_model_state.pose.position.y, prev_model_state.pose.position.y, atol=0.01):
+                if np.isclose(current_model_state.pose.position.x, prev_model_state.pose.position.x, atol=0.02) and np.isclose(current_model_state.pose.position.y, prev_model_state.pose.position.y, atol=0.02):
                     hit_wall += 1
-                    if hit_wall > 3:
+                    if hit_wall > 4:
                         print("Robot is hit_wall")
                         break
                 else:
@@ -189,6 +197,10 @@ class QTabel:
 
             print(f"Episode {episode + 1} took {t_end - t_start:.2f} seconds")
 
+        t_end_train = rospy.Time.now().to_sec()
+
+        print(f"Training took {t_end_train - t_start_train:.2f} seconds")
+
 
     def get_reward(self, state):
 
@@ -228,10 +240,10 @@ class Robot:
 
     def lidar_callback(self, msg: LaserScan):
 
-        self.ranges = {'right': min(msg.ranges[-60:] + msg.ranges[:60]),
-                       'front_right': min(msg.ranges[60:80]),
+        self.ranges = {'right': min(msg.ranges[-30:] + msg.ranges[:40]),
+                       'front_right': min(msg.ranges[50:70]),
                         'front': min(msg.ranges[85:105]),
-                        'left': min(msg.ranges[120:180])}\
+                        'left': min(msg.ranges[120:200])}
                         
 
     def go_forward(self, linear_speed = wf.LINEAR_SPEED_Y):
@@ -311,6 +323,14 @@ def main():
             q.train(robot=robot, gazebo=gaz)
         elif sys.argv[1] == 'run':
             q.load_q_table()
+            gaz.set_model_state(3, 0)
+            robot.go_forward()
+            while not rospy.is_shutdown():
+                state = q.get_state(robot.ranges)
+                action_index = q.get_action(q.q_table, state)
+                action = q.actions[action_index]
+                robot.steer(action)
+                robot.rate.sleep()
         else:
             print("Invalid argument")
 
